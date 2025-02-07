@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
+const sanitizeHtml = require("sanitize-html");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Express setup
@@ -15,7 +16,9 @@ const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 app.post("/ask", async (req, res) => {
-    const prompt = req.body.prompt;
+    const rawPrompt = req.body.prompt;
+    const cleanPrompt = sanitizeHtml(rawPrompt, {allowedTags: [], allowedAttributes: []});
+    const prompt = createPrompt(cleanPrompt);
     try {
         const result = await model.generateContent(prompt);
         res.json({ reply: result.response.text() });
@@ -27,6 +30,11 @@ app.post("/ask", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Prompt parameters
+function createPrompt(cleanPrompt) {
+    return "You are a tutor. Do NOT provide direct answers. Instead, review concepts and provide a similar solved example. Question: " + cleanPrompt;
+}
 
 // RAW Gemini API test
 /* 
