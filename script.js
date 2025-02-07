@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://localhost:3000/ask"; // Change this to your deployed backend URL
+const BACKEND_URL = "https://tubulartutor.onrender.com/ask"; // Change this to your deployed backend URL
 
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("sendPrompt").addEventListener("click", async () => {
