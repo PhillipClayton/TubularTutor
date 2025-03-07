@@ -2,7 +2,9 @@ const BACKEND_URL = "https://tubulartutor.onrender.com/ask"; // Change this to y
 
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("sendPrompt").addEventListener("click", async () => {
-        const prompt = document.getElementById("prompt").value;
+        const gradeLevel = document.getElementById("grade").value;
+        const rawPrompt = document.getElementById("prompt").value;
+        const prompt = rawPrompt + " Please speak to me at a " + gradeLevel + " grade level.";
         try {
             const response = await fetch(BACKEND_URL, {
                 method: "POST",
