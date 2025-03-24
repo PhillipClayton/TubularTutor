@@ -87,3 +87,7 @@ button:hover {
         padding: 15px;
     }
 }
+
+#loading p {
+    text-align: center; /* Center the text */
+}
