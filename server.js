@@ -1,14 +1,30 @@
 require("dotenv").config();
 const express = require("express");
-const axios = require("axios");
 const cors = require("cors");
 const sanitizeHtml = require("sanitize-html");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const db = require("./db");
+const authRoutes = require("./routes/auth");
+const studentsRoutes = require("./routes/students");
+const progressRoutes = require("./routes/progress");
+const adminRoutes = require("./routes/admin");
 
 // Express setup
 const app = express();
 app.use(express.json());
-app.use(cors()); // Allow frontend to communicate with the backend
+app.use(cors());
+
+// API (database + auth)
+app.use("/api/auth", authRoutes);
+app.use("/api/students", studentsRoutes);
+app.use("/api/progress", progressRoutes);
+app.use("/api/admin", adminRoutes);
+
+// Start server only after DB is ready (so /api/auth/login etc. work)
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is required. Set it in .env (see .env.example).");
+  process.exit(1);
+}
 
 // Gemini API
 const API_KEY = process.env.GEMINI_API_KEY;
@@ -29,7 +45,14 @@ app.post("/ask", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+db.initDb()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error("DB init error:", err.message);
+    process.exit(1);
+  });
 
 // Prompt parameters
 function createPrompt(cleanPrompt) {
