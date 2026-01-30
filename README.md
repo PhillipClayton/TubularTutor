@@ -12,21 +12,23 @@ The server exposes an API for auth, students, progress, and admin. TheLearningMa
 
 ## Running PostgreSQL locally (test before committing)
 
-To test the app against a real Postgres DB on your machine (no cloud, no account), run Postgres in a container or install it.
+To test the app against a real Postgres DB on your machine (no cloud, no account), run Postgres in Docker or install it with Homebrew.
 
-**Option A: Docker (no system-wide install)**
+**Option A: Docker (recommended for local development)**
 
-1. Start a Postgres container (creates a DB named `postgres`, user `postgres`, password `local`):
+1. Start PostgreSQL with Docker Compose (creates a DB named `postgres`, user `postgres`, password `local`, data in a named volume):
    ```bash
-   docker run -d --name tubulartutor-db -e POSTGRES_PASSWORD=local -p 5432:5432 postgres:16
+   docker compose up -d
    ```
-2. In the TubularTutor repo, copy `.env.example` to `.env` and set:
+   If you previously ran a one-off `docker run` for Postgres, remove the old container first: `docker rm -f tubulartutor-db`.
+2. Copy `.env.example` to `.env` and set:
    ```text
    DATABASE_URL=postgresql://postgres:local@localhost:5432/postgres
    JWT_SECRET=any-random-string-for-local-only
    ```
 3. Run `npm install`, `npm run seed`, then `npm start`. The app will create tables and seed data in this local DB.
-4. To stop the DB later: `docker stop tubulartutor-db`. To start it again: `docker start tubulartutor-db`.
+4. To stop the DB: `docker compose down`. To stop but keep data: `docker compose stop`. To start again: `docker compose up -d`.
+5. To wipe the DB and start fresh: `docker compose down -v` (removes the volume), then `docker compose up -d` and `npm run seed` again.
 
 **Option B: Homebrew on macOS**
 

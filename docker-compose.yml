@@ -1,0 +1,21 @@
+# Local PostgreSQL for TubularTutor development.
+# Start: docker compose up -d
+# Stop:  docker compose down
+# Logs:  docker compose logs -f db
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: tubulartutor-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - tubulartutor_pgdata:/var/lib/postgresql/data
+
+volumes:
+  tubulartutor_pgdata:
