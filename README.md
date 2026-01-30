@@ -10,6 +10,75 @@ The server exposes an API for auth, students, progress, and admin. TheLearningMa
 
 ---
 
+## Full setup: GitHub, Neon, and Render
+
+This is the simplest path to a live app: code on **GitHub**, persistent Postgres on **Neon** (free, no 90-day deletion), and the API running on **Render**.
+
+### 1. GitHub
+
+1. Create a repo on [github.com](https://github.com) (e.g. `TubularTutor`).
+2. Clone it locally, copy your TubularTutor code into it, then:
+   ```bash
+   git add .
+   git commit -m "Initial TubularTutor app"
+   git push -u origin main
+   ```
+   (Use `master` if that’s your default branch.)  
+   If the repo already exists and you’re just pushing updates, use your usual `git push`.
+
+### 2. Neon (database)
+
+1. Sign up at [neon.tech](https://neon.tech).
+2. **Create a project** (e.g. `tubulartutor`). Neon creates a database and a connection string.
+3. In the dashboard, open your project and copy the **connection string** (URI format, e.g. `postgresql://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require`).  
+   You’ll use this as `DATABASE_URL` in the next step and (optionally) locally for seeding.
+
+### 3. Render (web service)
+
+1. Go to [render.com](https://render.com) and log in. Connect your **GitHub** account if you haven’t.
+2. Click **New** → **Web Service**.
+3. Select your **TubularTutor** repo. Use the same branch you push to (e.g. `main`).
+4. Configure the service:
+   - **Name:** e.g. `tubulartutor`
+   - **Region:** pick one close to you or your users
+   - **Build Command:** `npm install`
+   - **Start Command:** `npm start`
+5. Open **Environment** (or **Advanced** → **Environment Variables**) and add:
+
+   | Key             | Value |
+   |-----------------|--------|
+   | `DATABASE_URL`  | The Neon connection string from step 2 |
+   | `JWT_SECRET`    | A long random string (e.g. run `openssl rand -hex 32` and paste the output) |
+   | `GEMINI_API_KEY`| Your Gemini API key (for the `/ask` chatbot) |
+
+   Save. Render will treat these as secret.
+
+6. Click **Create Web Service**. Render builds and deploys; the first deploy may take a few minutes.
+7. After the first successful deploy, your API is live at `https://<your-service-name>.onrender.com`.
+
+### 4. Seed the database (once)
+
+You need to run the seed script once so the app has an admin user, courses, and sample students.
+
+**Option A – From your machine (recommended)**  
+Set `DATABASE_URL` in your local `.env` to the **same** Neon connection string you used on Render. Then in the repo:
+
+```bash
+npm install
+npm run seed
+```
+
+**Option B – From Render**  
+In the Render dashboard, open your Web Service → **Shell**. In the shell run:
+
+```bash
+npm run seed
+```
+
+When seeding finishes, you’re done. The app uses GitHub for code, Neon for persistent Postgres, and Render to serve the API. TheLearningMatrix (or any client) can call `https://<your-service-name>.onrender.com` when not on localhost.
+
+---
+
 ## Running PostgreSQL locally (test before committing)
 
 To test the app against a real Postgres DB on your machine (no cloud, no account), run Postgres in Docker or install it with Homebrew.
