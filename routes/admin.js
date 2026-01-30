@@ -76,6 +76,58 @@ router.patch("/courses/:id", async (req, res) => {
   res.json(course);
 });
 
+router.delete("/courses/:id", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: "Invalid course id" });
+  }
+  const deleted = await db.deleteCourse(id);
+  if (!deleted) {
+    return res.status(404).json({ error: "Course not found" });
+  }
+  res.status(204).send();
+});
+
+router.patch("/users/:id", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: "Invalid user id" });
+  }
+  const { username, password } = req.body;
+  const existing = await db.getUserById(id);
+  if (!existing) {
+    return res.status(404).json({ error: "User not found" });
+  }
+  if (username != null && username.trim() === "") {
+    return res.status(400).json({ error: "Username cannot be empty" });
+  }
+  if (username != null) {
+    const taken = await db.getUserByUsername(username.trim());
+    if (taken && taken.id !== id) {
+      return res.status(400).json({ error: "Username already exists" });
+    }
+  }
+  let passwordHash = null;
+  if (password != null && password !== "") {
+    passwordHash = await bcrypt.hash(password, 10);
+  }
+  const updated = await db.updateUser(id, username != null ? username.trim() : null, passwordHash);
+  res.json(updated);
+});
+
+router.delete("/students/:id", async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: "Invalid student id" });
+  }
+  const student = await db.getStudentById(id);
+  if (!student) {
+    return res.status(404).json({ error: "Student not found" });
+  }
+  await db.deleteUser(student.user_id);
+  res.status(204).send();
+});
+
 router.post("/students/:id/courses", async (req, res) => {
   const studentId = parseInt(req.params.id, 10);
   const { courseIds } = req.body;

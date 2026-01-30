@@ -1,7 +1,10 @@
-const API_BASE =
-  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-    ? "http://localhost:3000"
-    : "https://tubulartutor.onrender.com";
+const isLocal =
+  window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+const API_BASE = isLocal
+  ? (window.location.origin && window.location.origin !== "null"
+      ? window.location.origin
+      : "http://localhost:3000")
+  : "https://tubulartutor.onrender.com";
 const BACKEND_URL = `${API_BASE}/ask`;
 
 document.addEventListener("DOMContentLoaded", () => {

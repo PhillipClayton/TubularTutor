@@ -186,12 +186,46 @@ async function updateStudent(id, displayName) {
   return rows[0] || null;
 }
 
+async function updateUser(id, username, passwordHash) {
+  const updates = [];
+  const values = [id];
+  let i = 2;
+  if (username != null) {
+    updates.push(`username = $${i}`);
+    values.push(username);
+    i++;
+  }
+  if (passwordHash != null) {
+    updates.push(`password_hash = $${i}`);
+    values.push(passwordHash);
+    i++;
+  }
+  if (updates.length === 0) return getUserById(id);
+  const { rows } = await pool.query(
+    `UPDATE users SET ${updates.join(", ")} WHERE id = $1 RETURNING id, username, role`,
+    values
+  );
+  return rows[0] || null;
+}
+
+async function deleteUser(id) {
+  const { rowCount } = await pool.query("DELETE FROM users WHERE id = $1", [id]);
+  return rowCount > 0;
+}
+
+async function deleteCourse(id) {
+  const { rowCount } = await pool.query("DELETE FROM courses WHERE id = $1", [id]);
+  return rowCount > 0;
+}
+
 module.exports = {
   pool,
   initDb,
   getUserByUsername,
   getUserById,
   createUser,
+  updateUser,
+  deleteUser,
   getStudentByUserId,
   getStudentById,
   createStudent,
@@ -199,6 +233,7 @@ module.exports = {
   getAllCourses,
   createCourse,
   updateCourse,
+  deleteCourse,
   enrollStudentInCourse,
   setStudentCourses,
   getProgressForStudent,
