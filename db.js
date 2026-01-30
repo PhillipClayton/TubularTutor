@@ -200,7 +200,7 @@ async function updateUser(id, username, passwordHash) {
     values.push(passwordHash);
     i++;
   }
-  if (updates.length === 0) return getUserById(id);
+  if (updates.length === 0) return await getUserById(id);
   const { rows } = await pool.query(
     `UPDATE users SET ${updates.join(", ")} WHERE id = $1 RETURNING id, username, role`,
     values
