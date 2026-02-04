@@ -1,9 +1,17 @@
 require("dotenv").config();
 const { Pool } = require("pg");
 
+// Normalize SSL mode to verify-full to avoid "treated as alias" security warning from pg/Render
+function normalizeConnectionString(url) {
+  if (!url || url.includes("localhost")) return url;
+  return url.replace(/sslmode=(prefer|require|verify-ca)/gi, "sslmode=verify-full");
+}
+
+const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("localhost") ? false : { rejectUnauthorized: false },
+  connectionString,
+  ssl: connectionString?.includes("localhost") ? false : { rejectUnauthorized: false },
 });
 
 async function initDb() {
