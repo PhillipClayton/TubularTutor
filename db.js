@@ -171,6 +171,51 @@ async function insertProgress(studentId, courseId, percentage) {
   return rows[0];
 }
 
+/**
+ * Upsert progress: only one row per (student, course, calendar day).
+ * If the client sends a date (YYYY-MM-DD), we update any existing row for that day or insert.
+ * Uses UTC for date comparison.
+ */
+async function upsertProgress(studentId, courseId, percentage, dateStr) {
+  const dateToUse = dateStr || new Date().toISOString().slice(0, 10);
+  const updateResult = await pool.query(
+    `UPDATE progress
+     SET percentage = $4, recorded_at = NOW()
+     WHERE student_id = $1 AND course_id = $2
+       AND (recorded_at AT TIME ZONE 'UTC')::date = $3::date
+     RETURNING id, student_id, course_id, percentage, recorded_at`,
+    [studentId, courseId, dateToUse, percentage]
+  );
+  if (updateResult.rowCount > 0) {
+    return updateResult.rows[0];
+  }
+  const recordedAt = (dateToUse + "T12:00:00Z");
+  const { rows } = await pool.query(
+    `INSERT INTO progress (student_id, course_id, percentage, recorded_at)
+     VALUES ($1, $2, $3, $4::timestamptz)
+     RETURNING id, student_id, course_id, percentage, recorded_at`,
+    [studentId, courseId, percentage, recordedAt]
+  );
+  return rows[0];
+}
+
+/**
+ * Delete a progress record by id. If studentId is provided, only deletes when the row belongs to that student (for admin safety).
+ */
+async function deleteProgressById(progressId, studentId) {
+  const params = studentId != null
+    ? [progressId, studentId]
+    : [progressId];
+  const clause = studentId != null
+    ? "id = $1 AND student_id = $2"
+    : "id = $1";
+  const { rowCount } = await pool.query(
+    "DELETE FROM progress WHERE " + clause,
+    params
+  );
+  return rowCount > 0;
+}
+
 async function getAllStudents() {
   const { rows } = await pool.query(
     "SELECT s.id, s.user_id, s.display_name, u.username FROM students s JOIN users u ON s.user_id = u.id ORDER BY s.display_name"
@@ -238,6 +283,8 @@ module.exports = {
   setStudentCourses,
   getProgressForStudent,
   insertProgress,
+  upsertProgress,
+  deleteProgressById,
   getAllStudents,
   updateStudent,
 };

@@ -12,7 +12,7 @@ router.post("/", requireAuth, async (req, res) => {
   if (!student) {
     return res.status(403).json({ error: "Student profile not found" });
   }
-  const { courseId, percentage } = req.body;
+  const { courseId, percentage, date: dateStr } = req.body;
   if (courseId == null || percentage == null) {
     return res.status(400).json({ error: "courseId and percentage required" });
   }
@@ -25,7 +25,7 @@ router.post("/", requireAuth, async (req, res) => {
   if (!allowed) {
     return res.status(400).json({ error: "Course not enrolled for this student" });
   }
-  const row = await db.insertProgress(student.id, parseInt(courseId, 10), pct);
+  const row = await db.upsertProgress(student.id, parseInt(courseId, 10), pct, dateStr || undefined);
   res.status(201).json(row);
 });
 

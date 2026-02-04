@@ -128,6 +128,19 @@ router.delete("/students/:id", async (req, res) => {
   res.status(204).send();
 });
 
+router.delete("/students/:studentId/progress/:progressId", async (req, res) => {
+  const studentId = parseInt(req.params.studentId, 10);
+  const progressId = parseInt(req.params.progressId, 10);
+  if (Number.isNaN(studentId) || Number.isNaN(progressId)) {
+    return res.status(400).json({ error: "Invalid student or progress id" });
+  }
+  const deleted = await db.deleteProgressById(progressId, studentId);
+  if (!deleted) {
+    return res.status(404).json({ error: "Progress entry not found" });
+  }
+  res.status(204).send();
+});
+
 router.post("/students/:id/courses", async (req, res) => {
   const studentId = parseInt(req.params.id, 10);
   const { courseIds } = req.body;
