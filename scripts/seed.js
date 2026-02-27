@@ -1,5 +1,5 @@
 require("dotenv").config();
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const db = require("../db");
 
 const ADMIN_USERNAME = process.env.SEED_ADMIN_USERNAME || "admin";
