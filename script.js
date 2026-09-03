@@ -44,7 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("sendPrompt").addEventListener("click", async () => {
         const gradeLevel = document.getElementById("grade").value;
         const rawPrompt = document.getElementById("prompt").value;
-        const prompt = rawPrompt + " Please speak to me at a " + gradeLevel + " grade level.";
+        const prompt = rawPrompt + "Please speak to me like I'm in grade " + gradeLevel + " in school.";
         
         // Show loading animation
         const loadingElement = document.getElementById("loading");
