@@ -63,22 +63,33 @@ function scoreModelForPriority(modelName) {
   return score;
 }
 
-// Discover available models that support generateContent
+// Discover available models that support generateContent using REST API
 async function discoverAvailableModels() {
   if (MODELS_DISCOVERED) return AVAILABLE_MODELS;
   
   try {
     console.log("Discovering available models for generateContent...");
-    const listModelsResponse = await genAI.listModels();
+    
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`
+    );
+    
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
     const models = [];
     
-    for await (const model of listModelsResponse) {
-      // Filter for models that support generateContent
-      if (model.supportedGenerationMethods && 
-          model.supportedGenerationMethods.includes('generateContent')) {
-        // Extract the model name (remove 'models/' prefix if present)
-        const modelName = model.name.replace(/^models\//, '');
-        models.push(modelName);
+    // Filter for models that support generateContent
+    if (data.models && Array.isArray(data.models)) {
+      for (const model of data.models) {
+        if (model.supportedGenerationMethods && 
+            model.supportedGenerationMethods.includes('generateContent')) {
+          // Extract the model name (remove 'models/' prefix if present)
+          const modelName = model.name.replace(/^models\//, '');
+          models.push(modelName);
+        }
       }
     }
     
