@@ -33,9 +33,76 @@ if (!API_KEY) {
 }
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-// Model fallback list (CSV). Configure via ENV or use sensible defaults.
-// Order is priority: first is preferred, later are fallbacks.
-const FALLBACK_MODELS = (process.env.GENERATIVE_MODEL_FALLBACKS || "gemini-3.8-flash,gemini-3.7,gemini-3.5").split(",").map(m => m.trim()).filter(Boolean);
+// Cache of discovered available models in priority order
+let AVAILABLE_MODELS = [];
+let MODELS_DISCOVERED = false;
+
+// Model priority scoring: prefer newer, lighter models
+// (e.g., 3.8-flash > 3.5-flash > 2.0-flash > lite variants)
+function scoreModelForPriority(modelName) {
+  const name = modelName.toLowerCase();
+  
+  // Extract version number
+  const versionMatch = name.match(/(\d+)\.(\d+)/);
+  let majorVersion = 0;
+  let minorVersion = 0;
+  if (versionMatch) {
+    majorVersion = parseInt(versionMatch[1], 10);
+    minorVersion = parseInt(versionMatch[2], 10);
+  }
+  
+  let score = majorVersion * 1000 + minorVersion * 100;
+  
+  // Boost flash models (they're fast and efficient)
+  if (name.includes('flash') && !name.includes('lite')) score += 50;
+  if (name.includes('flash') && name.includes('lite')) score += 25;
+  
+  // Penalize lite/experimental variants slightly
+  if (name.includes('lite')) score -= 10;
+  
+  return score;
+}
+
+// Discover available models that support generateContent
+async function discoverAvailableModels() {
+  if (MODELS_DISCOVERED) return AVAILABLE_MODELS;
+  
+  try {
+    console.log("Discovering available models for generateContent...");
+    const listModelsResponse = await genAI.listModels();
+    const models = [];
+    
+    for await (const model of listModelsResponse) {
+      // Filter for models that support generateContent
+      if (model.supportedGenerationMethods && 
+          model.supportedGenerationMethods.includes('generateContent')) {
+        // Extract the model name (remove 'models/' prefix if present)
+        const modelName = model.name.replace(/^models\//, '');
+        models.push(modelName);
+      }
+    }
+    
+    // Sort by priority (newest/best first)
+    models.sort((a, b) => scoreModelForPriority(b) - scoreModelForPriority(a));
+    
+    AVAILABLE_MODELS = models;
+    MODELS_DISCOVERED = true;
+    
+    if (models.length === 0) {
+      console.warn("⚠️  No models found that support generateContent. Check your API key and quotas.");
+    } else {
+      console.log(`✓ Discovered ${models.length} available models for generateContent`);
+      console.log(`  Primary model: ${models[0]}`);
+      console.log(`  Fallbacks: ${models.slice(1).join(', ') || '(none)'}`);
+    }
+    
+    return models;
+  } catch (err) {
+    console.error("Error discovering models:", err.message);
+    MODELS_DISCOVERED = true;
+    return [];
+  }
+}
 
 // Utility: determine if an error is transient/retriable
 function isRetriableError(err) {
@@ -48,8 +115,8 @@ function isRetriableError(err) {
     const netCodes = ['ECONNRESET','ENOTFOUND','ECONNREFUSED','ETIMEDOUT'];
     if (netCodes.includes(err.code)) return true;
   }
-  // Some error messages indicate overload
-  if (err.message && /overload|temporar|timeout|unavailable/i.test(err.message)) return true;
+  // Some error messages indicate overload or model not found
+  if (err.message && /overload|temporar|timeout|unavailable|not found|not supported/i.test(err.message)) return true;
   return false;
 }
 
@@ -85,9 +152,14 @@ async function tryGenerateWithModel(modelName, prompt, maxRetries = 2) {
 async function generateWithFallback(prompt) {
   let lastError = null;
   const attemptLog = [];
+  const fallbackModels = AVAILABLE_MODELS;
   
-  for (let idx = 0; idx < FALLBACK_MODELS.length; idx++) {
-    const modelName = FALLBACK_MODELS[idx];
+  if (fallbackModels.length === 0) {
+    throw new Error('No available generative models discovered. Check your API key and model availability.');
+  }
+  
+  for (let idx = 0; idx < fallbackModels.length; idx++) {
+    const modelName = fallbackModels[idx];
     attemptLog.push(`Attempting model: ${modelName}`);
     
     try {
@@ -107,7 +179,7 @@ async function generateWithFallback(prompt) {
       // otherwise record the last error and move to next model
       lastError = res.error || lastError;
       const errorMsg = res.error && res.error.message ? res.error.message : String(res.error);
-      attemptLog.push(`${modelName} failed: ${errorMsg}. ${idx < FALLBACK_MODELS.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      attemptLog.push(`${modelName} failed: ${errorMsg}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
       console.warn(`Model ${modelName} failed (will try next if available):`, errorMsg);
     } catch (err) {
       // If the error is not retriable or indicates a client issue, stop and surface it
@@ -116,7 +188,7 @@ async function generateWithFallback(prompt) {
       }
       lastError = err;
       const errorMsg = err && err.message ? err.message : String(err);
-      attemptLog.push(`${modelName} error: ${errorMsg}. ${idx < FALLBACK_MODELS.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      attemptLog.push(`${modelName} error: ${errorMsg}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
       console.warn(`Model ${modelName} threw error (will try next if available):`, errorMsg);
     }
   }
@@ -162,7 +234,9 @@ app.post("/ask", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 db.initDb()
-  .then(() => {
+  .then(async () => {
+    // Discover available models on startup
+    await discoverAvailableModels();
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch((err) => {
