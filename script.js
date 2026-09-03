@@ -40,16 +40,43 @@ function renderMath(text) {
     return element;
 }
 
-// Function to update status log with new messages
-function updateStatusLog(statusLog, attempts) {
+// Function to update status log with formatted messages
+function updateStatusLog(attempts) {
     const statusLogElement = document.getElementById("statusLog");
     if (!statusLogElement) return;
     
     statusLogElement.innerHTML = "";
     attempts.forEach((attempt, index) => {
         const line = document.createElement("div");
-        line.style.marginBottom = "4px";
-        line.textContent = "• " + attempt;
+        line.style.marginBottom = "6px";
+        
+        // Format messages to be more readable
+        let displayText = attempt;
+        
+        // Highlight model names and format attempt/fallback messages
+        if (attempt.includes("Attempting model:")) {
+            const modelName = attempt.match(/Attempting model: ([\w\-\.]+)/);
+            if (modelName && index === 0) {
+                // First attempt
+                displayText = `Contacting ${modelName[1]}...`;
+                line.innerHTML = "🔄 " + displayText;
+            } else if (modelName) {
+                // Fallback attempt
+                displayText = `Trying ${modelName[1]}...`;
+                line.innerHTML = "→ " + displayText;
+            } else {
+                line.innerHTML = "• " + displayText;
+            }
+        } else if (attempt.includes("failed:") || attempt.includes("error:")) {
+            // Clean up error messages
+            displayText = attempt.replace(/failed: /g, "→ ");
+            displayText = displayText.replace(/error: /g, "→ ");
+            displayText = displayText.replace(/\. (Trying next model|No models left).*/, "");
+            line.innerHTML = "→ " + displayText;
+        } else {
+            line.innerHTML = "• " + displayText;
+        }
+        
         statusLogElement.appendChild(line);
     });
 }
@@ -63,14 +90,16 @@ document.addEventListener("DOMContentLoaded", () => {
         // Show loading animation
         const loadingElement = document.getElementById("loading");
         const statusLogElement = document.getElementById("statusLog");
+        const responseElement = document.getElementById("response");
+        
         if (loadingElement) {
             loadingElement.style.display = "block";
         }
         if (statusLogElement) {
-            statusLogElement.innerHTML = "• Contacting AI models...";
+            statusLogElement.innerHTML = "<div style='margin-bottom: 6px;'>🤔 Contacting AI models...</div>";
         }
-        document.getElementById("response").innerHTML = "";
-        document.getElementById("response").style.display = "none";
+        responseElement.innerHTML = "";
+        responseElement.style.display = "none";
 
         try {
             const response = await fetch(BACKEND_URL, {
@@ -82,30 +111,53 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             const data = await response.json();
             
-            // Update status log with attempts if available
-            if (data.attempts && Array.isArray(data.attempts)) {
-                updateStatusLog(statusLogElement, data.attempts);
-            }
-            
             // Handle errors
             if (!response.ok) {
+                // Show error message and attempts in status log
+                if (statusLogElement) {
+                    statusLogElement.innerHTML = "<div style='margin-bottom: 6px; color: #c1212b; font-weight: bold;'>Unable to generate response</div>";
+                    if (data.attempts && Array.isArray(data.attempts)) {
+                        updateStatusLog(data.attempts);
+                    }
+                    if (data.error) {
+                        const errorLine = document.createElement("div");
+                        errorLine.style.marginTop = "8px";
+                        errorLine.style.color = "#c1212b";
+                        errorLine.innerHTML = "<em>" + data.error + "</em>";
+                        statusLogElement.appendChild(errorLine);
+                    }
+                }
                 throw new Error(data.error || "Failed to generate content");
+            }
+            
+            // Success! Update status log with final attempt info
+            if (data.attempts && Array.isArray(data.attempts)) {
+                updateStatusLog(data.attempts);
+            }
+            
+            // Hide loading and show response
+            if (loadingElement) {
+                loadingElement.style.display = "none";
             }
             
             // Render the response with math notation
             const renderedContent = renderMath(data.reply);
-            document.getElementById("response").innerHTML = "";
-            document.getElementById("response").appendChild(renderedContent);
-            document.getElementById("response").style.display = "block";
+            responseElement.innerHTML = "";
+            responseElement.appendChild(renderedContent);
+            responseElement.style.display = "block";
+            
         } catch (error) {
             console.error("Error:", error);
-            document.getElementById("response").innerText = "Failed to generate content: " + error.message;
-            document.getElementById("response").style.display = "block";
-        } finally {
+            
             // Hide loading animation
             if (loadingElement) {
                 loadingElement.style.display = "none";
             }
+            
+            // Show error in response area
+            responseElement.innerText = "Unable to generate response. Please try again.";
+            responseElement.style.color = "#c1212b";
+            responseElement.style.display = "block";
         }
     });
 });
