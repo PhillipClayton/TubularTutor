@@ -81,14 +81,24 @@ async function tryGenerateWithModel(modelName, prompt, maxRetries = 2) {
   return { success: false, error: new Error('Unknown error in tryGenerateWithModel'), model: modelName };
 }
 
-// Try models in order until one succeeds
+// Try models in order until one succeeds; return detailed status info
 async function generateWithFallback(prompt) {
   let lastError = null;
-  for (const modelName of FALLBACK_MODELS) {
+  const attemptLog = [];
+  
+  for (let idx = 0; idx < FALLBACK_MODELS.length; idx++) {
+    const modelName = FALLBACK_MODELS[idx];
+    attemptLog.push(`Attempting model: ${modelName}`);
+    
     try {
       const res = await tryGenerateWithModel(modelName, prompt, 2);
       if (res.success && res.result) {
-        return { text: res.result.response.text(), model: modelName };
+        return { 
+          text: res.result.response.text(), 
+          model: modelName,
+          attempts: attemptLog,
+          success: true
+        };
       }
       // If non-retriable error (like bad request / invalid prompt), rethrow immediately
       if (res.error && res.retriable === false) {
@@ -96,19 +106,24 @@ async function generateWithFallback(prompt) {
       }
       // otherwise record the last error and move to next model
       lastError = res.error || lastError;
-      console.warn(`Model ${modelName} failed (will try next if available):`, res.error && res.error.message ? res.error.message : res.error);
+      const errorMsg = res.error && res.error.message ? res.error.message : String(res.error);
+      attemptLog.push(`${modelName} failed: ${errorMsg}. ${idx < FALLBACK_MODELS.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      console.warn(`Model ${modelName} failed (will try next if available):`, errorMsg);
     } catch (err) {
       // If the error is not retriable or indicates a client issue, stop and surface it
       if (!isRetriableError(err)) {
         throw err;
       }
       lastError = err;
-      console.warn(`Model ${modelName} threw error (will try next if available):`, err && err.message ? err.message : err);
+      const errorMsg = err && err.message ? err.message : String(err);
+      attemptLog.push(`${modelName} error: ${errorMsg}. ${idx < FALLBACK_MODELS.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      console.warn(`Model ${modelName} threw error (will try next if available):`, errorMsg);
     }
   }
   // All models failed
   const aggregateError = new Error('All configured generative models failed');
   aggregateError.cause = lastError;
+  aggregateError.attempts = attemptLog;
   throw aggregateError;
 }
 
@@ -130,14 +145,18 @@ app.post("/ask", async (req, res) => {
     });
     const prompt = createPrompt(cleanPrompt);
     try {
-        const { text, model } = await generateWithFallback(prompt);
+        const { text, model, attempts } = await generateWithFallback(prompt);
         // return which model responded for observability (useful when fallbacks occur)
-        res.json({ reply: text, model });
+        res.json({ reply: text, model, attempts });
     } catch (error) {
         console.error("Error getting response from AI:", error && error.message ? error.message : error);
         // If the underlying error has a status use it, otherwise default to 500
         const status = (error && (error.status || (error.cause && (error.cause.status || error.cause.code)))) || 500;
-        res.status(status === 0 ? 500 : status).json({ error: "Failed to get response from AI" });
+        const attempts = error.attempts || [];
+        res.status(status === 0 ? 500 : status).json({ 
+          error: "Failed to get response from AI",
+          attempts 
+        });
     }
 });
 
