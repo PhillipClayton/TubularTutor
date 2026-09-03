@@ -33,7 +33,12 @@ const model = genAI.getGenerativeModel({ model: "gemini-3.8-flash" });
 
 app.post("/ask", async (req, res) => {
     const rawPrompt = req.body.prompt;
-    const cleanPrompt = sanitizeHtml(rawPrompt, {allowedTags: [], allowedAttributes: []});
+    // Only remove HTML tags but preserve LaTeX notation (backslashes)
+    const cleanPrompt = sanitizeHtml(rawPrompt, {
+        allowedTags: [], 
+        allowedAttributes: [],
+        disallowedTagsMode: 'discard'
+    });
     const prompt = createPrompt(cleanPrompt);
     try {
         const result = await model.generateContent(prompt);

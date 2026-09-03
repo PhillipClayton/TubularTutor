@@ -7,6 +7,39 @@ const API_BASE = isLocal
   : "https://tubulartutor.onrender.com";
 const BACKEND_URL = `${API_BASE}/ask`;
 
+// Function to render LaTeX math in text
+function renderMath(text) {
+    const element = document.createElement("div");
+    element.textContent = text;
+    
+    // Find all LaTeX patterns (both inline $...$ and display $$...$$)
+    const mathPattern = /(\$\$[^\$]+\$\$|\$[^\$]+\$|\\[a-zA-Z]+\{[^}]*\}|\\\w+)/g;
+    const parts = text.split(mathPattern);
+    
+    element.innerHTML = "";
+    parts.forEach(part => {
+        if (!part) return;
+        
+        // Check if it's a LaTeX expression
+        if (part.match(/^\$\$.*\$\$$/) || part.match(/^\$.*\$/) || part.match(/^\\/) || part.includes("\\")) {
+            const span = document.createElement("span");
+            try {
+                // Remove $$ or $ wrappers if present
+                const math = part.replace(/^\$\$|^\$|\$\$$|\$$/g, "");
+                katex.render(math, span, { throwOnError: false });
+                element.appendChild(span);
+            } catch (e) {
+                // If KaTeX fails, just display the text
+                element.appendChild(document.createTextNode(part));
+            }
+        } else {
+            element.appendChild(document.createTextNode(part));
+        }
+    });
+    
+    return element;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("sendPrompt").addEventListener("click", async () => {
         const gradeLevel = document.getElementById("grade").value;
@@ -18,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (loadingElement) {
             loadingElement.style.display = "block";
         }
-        document.getElementById("response").innerText = "";
+        document.getElementById("response").innerHTML = "";
         document.getElementById("response").style.display = "none";
 
         try {
@@ -30,7 +63,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({ prompt })
             });
             const data = await response.json();
-            document.getElementById("response").innerText = data.reply; // Accessing the correct property
+            
+            // Render the response with math notation
+            const renderedContent = renderMath(data.reply);
+            document.getElementById("response").innerHTML = "";
+            document.getElementById("response").appendChild(renderedContent);
             document.getElementById("response").style.display = "block";
         } catch (error) {
             console.error("Error:", error);
