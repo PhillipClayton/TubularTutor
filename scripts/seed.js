@@ -38,9 +38,9 @@ async function seed() {
     if (!existingAdmin) {
       const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
       await db.createUser(ADMIN_USERNAME, hash, "admin");
-      console.log(`Created admin user: ${ADMIN_USERNAME}`);
+      console.log("Created admin user.");
     } else {
-      console.log(`Admin user ${ADMIN_USERNAME} already exists`);
+      console.log("Admin user already exists.");
     }
 
     const courseIdsByName = {};
