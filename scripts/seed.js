@@ -38,9 +38,9 @@ async function seed() {
     if (!existingAdmin) {
       const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
       await db.createUser(ADMIN_USERNAME, hash, "admin");
-      console.log(`Created admin user: ${ADMIN_USERNAME} (password: ${ADMIN_PASSWORD})`);
+      console.log("Created admin user.");
     } else {
-      console.log(`Admin user ${ADMIN_USERNAME} already exists`);
+      console.log("Admin user already exists.");
     }
 
     const courseIdsByName = {};
@@ -67,7 +67,7 @@ async function seed() {
             await db.enrollStudentInCourse(student.id, courseId);
           }
         }
-        console.log(`Created student: ${s.displayName} (username: ${s.username}, password: ${s.username}123)`);
+        console.log(`Created student: ${s.displayName}`);
       } else {
         const student = await db.getStudentByUserId(user.id);
         if (student) {
