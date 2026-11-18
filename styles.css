@@ -2,7 +2,7 @@
 body {
     font-family: Arial, sans-serif;
     margin: 0;
-    padding: 0;
+    padding: 24px 12px;
     background-color: #f4f4f9;
     color: #333;
     display: flex;
@@ -10,12 +10,10 @@ body {
     align-items: center;
     justify-content: center;
     min-height: 100vh;
+    box-sizing: border-box;
 }
 
-h1 {
-    color: #4a90e2;
-    margin-bottom: 20px;
-}
+h1 { color: #4a90e2; margin-bottom: 20px; }
 
 #call {
     background-color: #fff;
@@ -27,28 +25,13 @@ h1 {
     margin-bottom: 20px;
     display: flex;
     flex-direction: column;
-    align-items: center; /* Center children horizontally */
-    box-sizing: border-box; /* Ensure padding is included in width */
+    align-items: center;
+    box-sizing: border-box;
 }
 
-#call label {
-    display: block;
-    margin-bottom: 10px;
-    font-weight: bold;
-    width: 100%; /* Ensure label takes full width */
-    text-align: center; /* Center text inside label */
-}
-
-#prompt {
-    width: calc(100% - 40px); /* Adjust width to account for padding */
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    resize: vertical;
-    min-height: 100px;
-    font-size: 16px;
-    box-sizing: border-box; /* Ensure padding is included in width */
-}
+#call label { display: block; margin: 12px 0 8px; font-weight: bold; width: 100%; text-align: center; }
+#prompt { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; min-height: 100px; font-size: 16px; box-sizing: border-box; }
+#grade, #imageUpload { max-width: 100%; }
 
 button {
     background-color: #4a90e2;
@@ -60,10 +43,8 @@ button {
     font-size: 16px;
     margin-top: 10px;
 }
-
-button:hover {
-    background-color: #357ab8;
-}
+button:hover { background-color: #357ab8; }
+button:disabled { opacity: 0.6; cursor: wait; }
 
 #response {
     background-color: #fff;
@@ -73,21 +54,19 @@ button:hover {
     width: 90%;
     max-width: 600px;
     margin-top: 20px;
-    white-space: pre-wrap; /* Preserve whitespace and line breaks */
+    white-space: pre-wrap;
+    box-sizing: border-box;
 }
+
+#imagePreview { width: 100%; text-align: center; }
+#imagePreview img { max-width: min(100%, 360px); max-height: 300px; margin-top: 12px; object-fit: contain; }
+#clearImage { background-color: #666; }
+.diagram-container { margin-top: 20px; white-space: normal; }
+.diagram-container h2 { font-size: 1.1rem; }
+.diagram-container svg { display: block; width: 100%; max-height: 420px; border: 1px solid #ddd; border-radius: 4px; }
+.error-message { color: #c1212b; }
 
 @media (max-width: 600px) {
-    #call, #response {
-        width: 100%;
-        padding: 15px;
-    }
-
-    button {
-        width: 100%;
-        padding: 15px;
-    }
-}
-
-#loading p {
-    text-align: center; /* Center the text */
+    #call, #response { width: 100%; padding: 15px; }
+    #sendPrompt { width: 100%; padding: 15px; }
 }
