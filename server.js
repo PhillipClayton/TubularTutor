@@ -22,6 +22,12 @@ function configuredModels(variable) {
 let TEXT_MODELS = configuredModels("GEMINI_TEXT_MODELS");
 let IMAGE_MODELS = configuredModels("GEMINI_IMAGE_MODELS");
 
+// Per-process model state. Zero-quota models are disabled for this server
+// session; temporary 429/503 failures receive a short cooldown.
+const DISABLED_MODELS = new Set();
+const MODEL_COOLDOWN_UNTIL = new Map();
+const TEMPORARY_COOLDOWN_MS = 10 * 1000;
+
 const app = express();
 app.use(express.json({ limit: "6mb" }));
 app.use(cors());
@@ -31,7 +37,7 @@ app.use("/api/progress", progressRoutes);
 app.use("/api/admin", adminRoutes);
 
 if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is required. Set it in .env (see .env.example).");
+  console.error("DATABASE_URL is required. Set it in .env (see .env.example)");
   process.exit(1);
 }
 
@@ -41,17 +47,31 @@ const genAI = new GoogleGenerativeAI(API_KEY || "");
 
 function modelVersionScore(name) {
   const lower = name.toLowerCase();
-  const versionMatch = lower.match(/gemini[- ](\d+(?:\.\d+)*)/);
+  const versionMatch = lower.match(/(?:gemini|gemma)[- ](\d+(?:\.\d+)*)/);
   const majorVersion = versionMatch ? Number(versionMatch[1].split(".")[0]) : 0;
-  let score = majorVersion * 10000;
+  const minorVersion = versionMatch && versionMatch[1].includes(".")
+    ? Number(versionMatch[1].split(".")[1])
+    : 0;
+
+  let score = majorVersion * 100000 + minorVersion * 1000;
   if (lower.includes("flash") && !lower.includes("lite") && !lower.includes("preview") && !lower.includes("exp")) score += 400;
-  if (lower.includes("flash-lite") || lower.includes("flash_lite")) score += 200;
-  if (lower.includes("flash")) score += 100;
-  if (lower.includes("lite")) score += 25;
-  if (lower.includes("preview")) score -= 100;
-  if (lower.includes("exp")) score -= 200;
-  if (lower.includes("pro")) score -= 50;
+  if (lower.includes("flash-lite") || lower.includes("flash_lite") || lower.includes("lite")) score += 200;
+  if (lower.includes("preview") || lower.includes("exp") || lower.includes("pro")) score -= 100;
   return score;
+}
+
+function isAllowedModelName(name) {
+  const lower = String(name).toLowerCase();
+  const positive = /(?:gemini).*flash|gemma-4/i.test(lower);
+  const excluded = /image|tts|live|audio|embedding|1\.5|2\.0/i.test(lower);
+  return positive && !excluded;
+}
+
+function filterAndSortModels(names) {
+  return [...new Set(names)]
+    .filter(isAllowedModelName)
+    .sort((a, b) => modelVersionScore(b) - modelVersionScore(a))
+    .slice(0, 3);
 }
 
 async function discoverAvailableModels() {
@@ -63,29 +83,33 @@ async function discoverAvailableModels() {
 
     const data = await response.json();
     const discovered = (data.models || [])
-      .filter((model) => (model.supportedGenerationMethods || []).includes("generateContent") && /^models\/gemini-/i.test(model.name || ""))
-      .map((model) => model.name.replace(/^models\//, ""))
-      .filter((name) => !/embed|embedding|image-generation|imagen|tts|aqa/i.test(name));
+      .filter((model) => (model.supportedGenerationMethods || []).includes("generateContent"))
+      .map((model) => model.name.replace(/^models\//, ""));
 
     const textPreferences = configuredModels("GEMINI_TEXT_MODELS");
     const imagePreferences = configuredModels("GEMINI_IMAGE_MODELS");
 
-    TEXT_MODELS = [...new Set([...textPreferences, ...discovered])]
-      .sort((a, b) => modelVersionScore(b) - modelVersionScore(a))
-      .slice(0, 3);
-
-    IMAGE_MODELS = [...new Set([...imagePreferences, ...discovered])]
-      .filter((name) => !/embed|embedding|image-generation|imagen|tts|aqa/i.test(name))
-      .sort((a, b) => modelVersionScore(b) - modelVersionScore(a))
-      .slice(0, 3);
+    // Preferences remain fallbacks, but every configured/discovered candidate
+    // goes through the same positive/negative name filter.
+    TEXT_MODELS = filterAndSortModels([...textPreferences, ...discovered]);
+    IMAGE_MODELS = filterAndSortModels([...imagePreferences, ...discovered]);
 
     return { text: TEXT_MODELS, image: IMAGE_MODELS };
   } catch (error) {
     console.warn("Gemini model discovery failed:", error.message);
-    TEXT_MODELS = configuredModels("GEMINI_TEXT_MODELS");
-    IMAGE_MODELS = configuredModels("GEMINI_IMAGE_MODELS");
+    TEXT_MODELS = filterAndSortModels(configuredModels("GEMINI_TEXT_MODELS"));
+    IMAGE_MODELS = filterAndSortModels(configuredModels("GEMINI_IMAGE_MODELS"));
     return { text: TEXT_MODELS, image: IMAGE_MODELS };
   }
+}
+
+function findErrorStatus(err) {
+  let current = err;
+  for (let depth = 0; current && depth < 5; depth++, current = current.cause) {
+    const status = current.status || (current.response && current.response.status);
+    if (status) return Number(status);
+  }
+  return null;
 }
 
 function isRetriableError(err) {
@@ -104,6 +128,15 @@ function isModelOrCapabilityError(err) {
   for (let depth = 0; current && depth < 5; depth++, current = current.cause) {
     const message = typeof current.message === "string" ? current.message : "";
     if (/not found|not supported|does not support|unsupported|unknown model|invalid model/i.test(message)) return true;
+  }
+  return false;
+}
+
+function isZeroQuotaError(err) {
+  let current = err;
+  for (let depth = 0; current && depth < 5; depth++, current = current.cause) {
+    const message = typeof current.message === "string" ? current.message : "";
+    if (/limit:\s*0|limit exceeded.*free tier|free tier.*limit exceeded|quota.*limit.*0/i.test(message)) return true;
   }
   return false;
 }
@@ -190,31 +223,51 @@ function createPrompt(cleanPrompt, gradeLevel, hasImage) {
 
 async function generateWithFallback(prompt, image) {
   const models = image ? IMAGE_MODELS : TEXT_MODELS;
-  if (models.length === 0) throw new Error(`No available Gemini ${image ? "image" : "text"} models discovered`);
+  if (models.length === 0) throw new Error(`No available Gemini ${image ? "image" : "text""} models discovered`);
   const parts = image ? [prompt, { inlineData: { mimeType: image.mimeType, data: image.data } }] : [prompt];
   const attempts = [];
   let lastError;
 
   for (const modelName of models) {
+    if (DISABLED_MODELS.has(modelName)) {
+      attempts.push(`${modelName} skipped: no free-tier quota for this process`);
+      continue;
+    }
+
+    const cooldownUntil = MODEL_COOLDOWN_UNTIL.get(modelName) || 0;
+    if (Date.now() < cooldownUntil) {
+      attempts.push(`${modelName} skipped: temporarily cooling down`);
+      continue;
+    }
+
     attempts.push(`Attempting ${image ? "image" : "text"} model: ${modelName}`);
     try {
       const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { responseMimeType: "application/json" } });
       const result = await model.generateContent(parts);
       const parsed = parseTutorResponse(result.response.text());
+      MODEL_COOLDOWN_UNTIL.delete(modelName);
       return { ...parsed, model: modelName, attempts };
     } catch (err) {
       lastError = err;
       const message = errorSummary(err);
       attempts.push(`${modelName} failed: ${message}`);
       console.warn(`Gemini ${image ? "image" : "text"} model ${modelName} failed:`, message);
-      if (!isRetriableError(err) && !isModelOrCapabilityError(err)) break;
+
+      if (isZeroQuotaError(err) && findErrorStatus(err) === 429) {
+        DISABLED_MODELS.add(modelName);
+        console.warn(`Gemini model ${modelName} disabled for this process because it reported zero quota`);
+      } else if (isRetriableError(err) || isModelOrCapabilityError(err)) {
+        MODEL_COOLDOWN_UNTIL.set(modelName, Date.now() + TEMPORARY_COOLDOWN_MS);
+      } else {
+        break;
+      }
     }
   }
 
   const error = new Error("Unable to generate a tutoring response");
   error.cause = lastError;
   error.attempts = attempts;
-  error.status = lastError && lastError.status;
+  error.status = lastError && findErrorStatus(lastError);
   throw error;
 }
 
@@ -264,3 +317,4 @@ db.initDb()
     console.error("DB init error:", err.message);
     process.exit(1);
   });
+
