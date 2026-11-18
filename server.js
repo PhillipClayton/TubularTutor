@@ -62,8 +62,8 @@ function modelVersionScore(name) {
 
 function isAllowedModelName(name) {
   const lower = String(name).toLowerCase();
-  const positive = /(?:gemini).*flash|gemma-4/i.test(lower);
-  const excluded = /image|tts|live|audio|embedding|1\.5|2\.0/i.test(lower);
+  const positive = /gemini.*flash/i.test(lower);
+  const excluded = /gemma|image|tts|live|audio|embedding|1\.5|2\.0/i.test(lower);
   return positive && !excluded;
 }
 
@@ -204,21 +204,34 @@ function validateDiagram(diagram) {
 }
 
 function parseTutorResponse(text) {
-  try {
-    const unfenced = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    const parsed = JSON.parse(unfenced);
-    if (!parsed || typeof parsed.reply !== "string") throw new Error("Invalid response shape");
-    return { reply: parsed.reply.slice(0, 12000), diagram: validateDiagram(parsed.diagram) };
-  } catch (_err) {
-    return { reply: text, diagram: null };
+  const source = String(text || "").trim();
+  const candidates = [
+    source.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""),
+  ];
+
+  for (let start = source.lastIndexOf("{"); start >= 0; start = source.lastIndexOf("{", start - 1)) {
+    candidates.push(source.slice(start));
   }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed.reply === "string") {
+        return { reply: parsed.reply.slice(0, 12000), diagram: validateDiagram(parsed.diagram) };
+      }
+    } catch (_err) {
+      // Try the next extraction candidate.
+    }
+  }
+
+  throw new Error("Model returned invalid JSON response");
 }
 
 function createPrompt(cleanPrompt, gradeLevel, hasImage) {
   const imageInstruction = hasImage
     ? " Carefully inspect the student's uploaded image. If it contains a graph or geometry task, you may include an optional diagram in the schema below. Do not guess unclear labels; mention uncertainty instead of inventing details."
     : " You may include an optional diagram when it would help explain the concept.";
-  return `You are a supportive K-12 tutor speaking to a student in grade ${gradeLevel}. Do not give the final answer to an assigned problem. Explain the relevant concept and guide the student with small steps.${imageInstruction} Reply with JSON: {"reply":"...","diagram":null or {"type":"graph","title":"...","points":[{"x":1,"y":2}]} or {"type":"geometry","title":"...","points":[{"id":"A","x":10,"y":10}],"segments":[["A","B"]]} }`;
+  return `You are a supportive K-12 tutor speaking to a student in grade ${gradeLevel}. Do not give the final answer to an assigned problem. Explain the relevant concept and guide the student with small steps.${imageInstruction} Return exactly one valid JSON object with this shape: {"reply":"...","diagram":null}. Do not include markdown, commentary, reasoning, or any text outside the JSON object. Student request: ${cleanPrompt}`;
 }
 
 async function generateWithFallback(prompt, image) {
@@ -256,7 +269,7 @@ async function generateWithFallback(prompt, image) {
       if (isZeroQuotaError(err) && findErrorStatus(err) === 429) {
         DISABLED_MODELS.add(modelName);
         console.warn(`Gemini model ${modelName} disabled for this process because it reported zero quota`);
-      } else if (isRetriableError(err) || isModelOrCapabilityError(err)) {
+      } else if (isRetriableError(err) || isModelOrCapabilityError(err) || /invalid JSON response/i.test(errorSummary(err))) {
         MODEL_COOLDOWN_UNTIL.set(modelName, Date.now() + TEMPORARY_COOLDOWN_MS);
       } else {
         break;
