@@ -12,25 +12,19 @@ const adminRoutes = require("./routes/admin");
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
 function configuredModels(variable) {
   const configured = process.env[variable];
-  const models = (configured ? configured.split(",") : DEFAULT_MODELS)
-    .map((model) => model.trim())
-    .filter(Boolean);
-  return [...new Set(models)].slice(0, 3);
+  if (!configured) return [];
+  return [...new Set(configured.split(",").map((model) => model.trim()).filter(Boolean))].slice(0, 3);
 }
 
-const TEXT_MODELS = configuredModels("GEMINI_TEXT_MODELS");
-const IMAGE_MODELS = configuredModels("GEMINI_IMAGE_MODELS");
+let TEXT_MODELS = configuredModels("GEMINI_TEXT_MODELS");
+let IMAGE_MODELS = configuredModels("GEMINI_IMAGE_MODELS");
 
-// Express setup
 const app = express();
 app.use(express.json({ limit: "6mb" }));
 app.use(cors());
-
-// API (database + auth)
 app.use("/api/auth", authRoutes);
 app.use("/api/students", studentsRoutes);
 app.use("/api/progress", progressRoutes);
@@ -42,10 +36,57 @@ if (!process.env.DATABASE_URL) {
 }
 
 const API_KEY = process.env.GEMINI_API_KEY;
-if (!API_KEY) {
-  console.warn("Warning: GEMINI_API_KEY is not set. /ask will return an error until the key is provided.");
-}
+if (!API_KEY) console.warn("Warning: GEMINI_API_KEY is not set. /ask will return an error until the key is provided.");
 const genAI = new GoogleGenerativeAI(API_KEY || "");
+
+function modelVersionScore(name) {
+  const lower = name.toLowerCase();
+  const versionMatch = lower.match(/gemini[- ](\d+(?:\.\d+)*)/);
+  const majorVersion = versionMatch ? Number(versionMatch[1].split(".")[0]) : 0;
+  let score = majorVersion * 10000;
+  if (lower.includes("flash") && !lower.includes("lite") && !lower.includes("preview") && !lower.includes("exp")) score += 400;
+  if (lower.includes("flash-lite") || lower.includes("flash_lite")) score += 200;
+  if (lower.includes("flash")) score += 100;
+  if (lower.includes("lite")) score += 25;
+  if (lower.includes("preview")) score -= 100;
+  if (lower.includes("exp")) score -= 200;
+  if (lower.includes("pro")) score -= 50;
+  return score;
+}
+
+async function discoverAvailableModels() {
+  if (!API_KEY) return { text: [], image: [] };
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(API_KEY)}&pageSize=1000`);
+    if (!response.ok) throw new Error(`Model discovery failed: ${response.status} ${response.statusText}`);
+
+    const data = await response.json();
+    const discovered = (data.models || [])
+      .filter((model) => (model.supportedGenerationMethods || []).includes("generateContent") && /^models\/gemini-/i.test(model.name || ""))
+      .map((model) => model.name.replace(/^models\//, ""))
+      .filter((name) => !/embed|embedding|image-generation|imagen|tts|aqa/i.test(name));
+
+    const textPreferences = configuredModels("GEMINI_TEXT_MODELS");
+    const imagePreferences = configuredModels("GEMINI_IMAGE_MODELS");
+
+    TEXT_MODELS = [...new Set([...textPreferences, ...discovered])]
+      .sort((a, b) => modelVersionScore(b) - modelVersionScore(a))
+      .slice(0, 3);
+
+    IMAGE_MODELS = [...new Set([...imagePreferences, ...discovered])]
+      .filter((name) => !/embed|embedding|image-generation|imagen|tts|aqa/i.test(name))
+      .sort((a, b) => modelVersionScore(b) - modelVersionScore(a))
+      .slice(0, 3);
+
+    return { text: TEXT_MODELS, image: IMAGE_MODELS };
+  } catch (error) {
+    console.warn("Gemini model discovery failed:", error.message);
+    TEXT_MODELS = configuredModels("GEMINI_TEXT_MODELS");
+    IMAGE_MODELS = configuredModels("GEMINI_IMAGE_MODELS");
+    return { text: TEXT_MODELS, image: IMAGE_MODELS };
+  }
+}
 
 function isRetriableError(err) {
   let current = err;
@@ -54,6 +95,15 @@ function isRetriableError(err) {
     if ([429, 500, 502, 503, 504].includes(status)) return true;
     if (typeof current.code === "string" && /ECONNRESET|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|UND_ERR|FETCH_FAILED/i.test(current.code)) return true;
     if (typeof current.message === "string" && /fetch failed|network|socket|overload|temporar|timeout|unavailable/i.test(current.message)) return true;
+  }
+  return false;
+}
+
+function isModelOrCapabilityError(err) {
+  let current = err;
+  for (let depth = 0; current && depth < 5; depth++, current = current.cause) {
+    const message = typeof current.message === "string" ? current.message : "";
+    if (/not found|not supported|does not support|unsupported|unknown model|invalid model/i.test(message)) return true;
   }
   return false;
 }
@@ -70,34 +120,24 @@ function errorSummary(err) {
 function validateImage(image) {
   if (image === undefined || image === null) return null;
   if (!image || typeof image !== "object" || Array.isArray(image)) {
-    const error = new Error("image must contain a supported image upload");
-    error.status = 400;
-    throw error;
+    const error = new Error("image must contain a supported image upload"); error.status = 400; throw error;
   }
   const { mimeType, data } = image;
   if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
-    const error = new Error("Supported image types are JPEG, PNG, and WebP");
-    error.status = 415;
-    throw error;
+    const error = new Error("Supported image types are JPEG, PNG, and WebP"); error.status = 415; throw error;
   }
   if (typeof data !== "string" || !data || data.length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) {
-    const error = new Error("Image is invalid or exceeds the 4 MB limit");
-    error.status = 400;
-    throw error;
+    const error = new Error("Image is invalid or exceeds the 4 MB limit"); error.status = 400; throw error;
   }
   const buffer = Buffer.from(data, "base64");
   if (buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES || buffer.toString("base64").replace(/=+$/, "") !== data.replace(/=+$/, "")) {
-    const error = new Error("Image is invalid or exceeds the 4 MB limit");
-    error.status = 400;
-    throw error;
+    const error = new Error("Image is invalid or exceeds the 4 MB limit"); error.status = 400; throw error;
   }
   const isPng = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   const isWebp = buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
   if (!(mimeType === "image/png" && isPng) && !(mimeType === "image/jpeg" && isJpeg) && !(mimeType === "image/webp" && isWebp)) {
-    const error = new Error("Image content does not match its file type");
-    error.status = 415;
-    throw error;
+    const error = new Error("Image content does not match its file type"); error.status = 415; throw error;
   }
   return { mimeType, data };
 }
@@ -106,27 +146,19 @@ function finiteNumber(value, min = -10000, max = 10000) {
   return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
 }
 
-// Validate the model's small diagram schema before sending it to the browser.
 function validateDiagram(diagram) {
   if (!diagram || typeof diagram !== "object" || Array.isArray(diagram)) return null;
-
   if (diagram.type === "graph" && Array.isArray(diagram.points) && diagram.points.length >= 2 && diagram.points.length <= 100) {
     const points = diagram.points.filter((point) => point && finiteNumber(point.x) && finiteNumber(point.y));
     if (points.length !== diagram.points.length) return null;
-    return {
-      type: "graph",
-      title: typeof diagram.title === "string" ? diagram.title.slice(0, 100) : "Graph",
-      points
-    };
+    return { type: "graph", title: typeof diagram.title === "string" ? diagram.title.slice(0, 100) : "Graph", points };
   }
-
   if (diagram.type === "geometry" && Array.isArray(diagram.points) && diagram.points.length >= 2 && diagram.points.length <= 20 && Array.isArray(diagram.segments) && diagram.segments.length <= 40) {
     const ids = new Set();
     const points = [];
     for (const point of diagram.points) {
       if (!point || typeof point.id !== "string" || !/^[A-Za-z0-9]{1,8}$/.test(point.id) || ids.has(point.id) || !finiteNumber(point.x, 0, 100) || !finiteNumber(point.y, 0, 100)) return null;
-      ids.add(point.id);
-      points.push({ id: point.id, x: point.x, y: point.y });
+      ids.add(point.id); points.push({ id: point.id, x: point.x, y: point.y });
     }
     const segments = [];
     for (const segment of diagram.segments) {
@@ -135,7 +167,6 @@ function validateDiagram(diagram) {
     }
     return { type: "geometry", title: typeof diagram.title === "string" ? diagram.title.slice(0, 100) : "Diagram", points, segments };
   }
-
   return null;
 }
 
@@ -146,7 +177,6 @@ function parseTutorResponse(text) {
     if (!parsed || typeof parsed.reply !== "string") throw new Error("Invalid response shape");
     return { reply: parsed.reply.slice(0, 12000), diagram: validateDiagram(parsed.diagram) };
   } catch (_err) {
-    // Preserve a useful tutor reply even if the model fails to follow the JSON format.
     return { reply: text, diagram: null };
   }
 }
@@ -160,7 +190,7 @@ function createPrompt(cleanPrompt, gradeLevel, hasImage) {
 
 async function generateWithFallback(prompt, image) {
   const models = image ? IMAGE_MODELS : TEXT_MODELS;
-  if (models.length === 0) throw new Error(`No ${image ? "image" : "text"} models configured`);
+  if (models.length === 0) throw new Error(`No available Gemini ${image ? "image" : "text"} models discovered`);
   const parts = image ? [prompt, { inlineData: { mimeType: image.mimeType, data: image.data } }] : [prompt];
   const attempts = [];
   let lastError;
@@ -168,10 +198,7 @@ async function generateWithFallback(prompt, image) {
   for (const modelName of models) {
     attempts.push(`Attempting ${image ? "image" : "text"} model: ${modelName}`);
     try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: { responseMimeType: "application/json" }
-      });
+      const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { responseMimeType: "application/json" } });
       const result = await model.generateContent(parts);
       const parsed = parseTutorResponse(result.response.text());
       return { ...parsed, model: modelName, attempts };
@@ -180,8 +207,7 @@ async function generateWithFallback(prompt, image) {
       const message = errorSummary(err);
       attempts.push(`${modelName} failed: ${message}`);
       console.warn(`Gemini ${image ? "image" : "text"} model ${modelName} failed:`, message);
-      // Do not waste time trying sibling models for invalid requests/auth/config problems.
-      if (!isRetriableError(err)) break;
+      if (!isRetriableError(err) && !isModelOrCapabilityError(err)) break;
     }
   }
 
@@ -201,9 +227,7 @@ app.post("/ask", async (req, res) => {
     if ((!rawPrompt || typeof rawPrompt !== "string" || !rawPrompt.trim()) && !image) {
       return res.status(400).json({ error: "prompt (string) or image is required in the request body" });
     }
-    if (rawPrompt !== undefined && typeof rawPrompt !== "string") {
-      return res.status(400).json({ error: "prompt must be a string" });
-    }
+    if (rawPrompt !== undefined && typeof rawPrompt !== "string") return res.status(400).json({ error: "prompt must be a string" });
     if (!API_KEY) return res.status(500).json({ error: "Generative AI key not configured on server" });
 
     const gradeLevel = Number(req.body.gradeLevel);
@@ -224,7 +248,6 @@ app.post("/ask", async (req, res) => {
   }
 });
 
-// Return useful JSON for oversized JSON/image requests.
 app.use((err, _req, res, next) => {
   if (err && err.type === "entity.too.large") return res.status(413).json({ error: "Request is too large; images must be 4 MB or smaller" });
   return next(err);
@@ -232,8 +255,9 @@ app.use((err, _req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 db.initDb()
-  .then(() => {
-    console.info(`Gemini model configuration: text=${TEXT_MODELS.join(",")} image=${IMAGE_MODELS.join(",")}`);
+  .then(async () => {
+    const discovered = await discoverAvailableModels();
+    console.info(`Gemini model configuration: text=${discovered.text.join(",") || "(none)"} image=${discovered.image.join(",") || "(none)"}`);
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   })
   .catch((err) => {
