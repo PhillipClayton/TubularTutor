@@ -118,17 +118,51 @@ async function discoverAvailableModels() {
 // Utility: determine if an error is transient/retriable
 function isRetriableError(err) {
   if (!err) return false;
-  // Common shapes: err.status, err.code, err.response?.status, err.message
-  const status = err.status || err.code || (err.response && err.response.status);
-  if (status === 429 || status === 503 || status === 502 || status === 504) return true;
-  // Network/connection errors
-  if (err.code && typeof err.code === 'string') {
-    const netCodes = ['ECONNRESET','ENOTFOUND','ECONNREFUSED','ETIMEDOUT'];
-    if (netCodes.includes(err.code)) return true;
+
+  // Include nested fetch causes, because the Google SDK commonly wraps transport failures.
+  const causes = [];
+  let current = err;
+  for (let depth = 0; current && depth < 5; depth++) {
+    causes.push(current);
+    current = current.cause;
   }
-  // Some error messages indicate overload or model not found
-  if (err.message && /overload|temporar|timeout|unavailable|not found|not supported/i.test(err.message)) return true;
+
+  for (const error of causes) {
+    const status = error.status || error.code || (error.response && error.response.status);
+    if ([429, 500, 502, 503, 504, 'ECONNRESET', 'ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'FETCH_FAILED'].includes(status)) {
+      return true;
+    }
+
+    if (typeof error.code === 'string') {
+      if (/ECONNRESET|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|UND_ERR|FETCH_FAILED/i.test(error.code)) {
+        return true;
+      }
+    }
+
+    if (typeof error.message === 'string' &&
+        /fetch failed|ECONNRESET|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|socket|network|overload|temporar|timeout|unavailable|not found|not supported/i.test(error.message)) {
+      return true;
+    }
+  }
+
   return false;
+}
+
+function describeError(error) {
+  if (!error) return '(no error)';
+
+  const parts = [];
+  let current = error;
+  for (let depth = 0; current && depth < 5; depth++) {
+    parts.push({
+      name: current.name,
+      message: current.message,
+      code: current.code,
+      status: current.status || (current.response && current.response.status)
+    });
+    current = current.cause;
+  }
+  return JSON.stringify(parts);
 }
 
 // Try to generate content with a given model, with retries and exponential backoff
@@ -150,7 +184,7 @@ async function tryGenerateWithModel(modelName, prompt, maxRetries = 2) {
         return { success: false, error: err, model: modelName, retriable: true };
       }
       // exponential backoff before retrying
-      const delay = Math.pow(2, attempt) * 500; // 500ms, 1s, 2s ...
+      const delay = Math.pow(2, attempt) * 500; // 500ms, 1s
       await new Promise(r => setTimeout(r, delay));
       attempt++;
     }
@@ -189,18 +223,18 @@ async function generateWithFallback(prompt) {
       }
       // otherwise record the last error and move to next model
       lastError = res.error || lastError;
-      const errorMsg = res.error && res.error.message ? res.error.message : String(res.error);
-      attemptLog.push(`${modelName} failed: ${errorMsg}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
-      console.warn(`Model ${modelName} failed (will try next if available):`, errorMsg);
+      const errorDescription = describeError(res.error);
+      attemptLog.push(`${modelName} failed: ${errorDescription}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      console.warn(`Model ${modelName} failed (will try next if available):`, errorDescription);
     } catch (err) {
       // If the error is not retriable or indicates a client issue, stop and surface it
       if (!isRetriableError(err)) {
         throw err;
       }
       lastError = err;
-      const errorMsg = err && err.message ? err.message : String(err);
-      attemptLog.push(`${modelName} error: ${errorMsg}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
-      console.warn(`Model ${modelName} threw error (will try next if available):`, errorMsg);
+      const errorDescription = describeError(err);
+      attemptLog.push(`${modelName} error: ${errorDescription}. ${idx < fallbackModels.length - 1 ? 'Trying next model...' : 'No models left.'}`);
+      console.warn(`Model ${modelName} threw error (will try next if available):`, errorDescription);
     }
   }
   // All models failed
@@ -232,11 +266,11 @@ app.post("/ask", async (req, res) => {
         // return which model responded for observability (useful when fallbacks occur)
         res.json({ reply: text, model, attempts });
     } catch (error) {
-        console.error("Error getting response from AI:", error && error.message ? error.message : error);
+        console.error("Error getting response from AI:", describeError(error));
         // If the underlying error has a status use it, otherwise default to 500
         const status = (error && (error.status || (error.cause && (error.cause.status || error.cause.code)))) || 500;
         const attempts = error.attempts || [];
-        res.status(status === 0 ? 500 : status).json({ 
+        res.status(typeof status === 'number' && status >= 400 && status <= 599 ? status : 500).json({ 
           error: "Failed to get response from AI",
           attempts 
         });
