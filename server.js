@@ -12,6 +12,10 @@ const adminRoutes = require("./routes/admin");
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_MODEL_OUTPUT_TOKENS = 2048;
+const MAX_ERROR_MESSAGE_LENGTH = 1200;
+const MAX_CONCURRENT_ASKS = 2;
+let activeAskRequests = 0;
 
 function configuredModels(variable) {
   const configured = process.env[variable];
@@ -145,7 +149,13 @@ function errorSummary(err) {
   const details = [];
   let current = err;
   for (let depth = 0; current && depth < 5; depth++, current = current.cause) {
-    details.push({ name: current.name, message: current.message, code: current.code, status: current.status });
+    const message = typeof current.message === "string" ? current.message : "";
+    details.push({
+      name: current.name,
+      message: message.slice(0, MAX_ERROR_MESSAGE_LENGTH),
+      code: current.code,
+      status: current.status
+    });
   }
   return JSON.stringify(details);
 }
@@ -205,26 +215,20 @@ function validateDiagram(diagram) {
 
 function parseTutorResponse(text) {
   const source = String(text || "").trim();
-  const candidates = [
-    source.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""),
-  ];
+  if (!source || source.length > 20000) throw new Error("Model returned empty or oversized response");
 
-  for (let start = source.lastIndexOf("{"); start >= 0; start = source.lastIndexOf("{", start - 1)) {
-    candidates.push(source.slice(start));
+  // Accept a single JSON object (optionally inside a code fence). Avoid scanning
+  // every brace in untrusted model output, which can create quadratic parsing work.
+  const candidate = source.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch (_err) {
+    throw new Error("Model returned invalid JSON response");
   }
 
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed.reply === "string") {
-        return { reply: parsed.reply.slice(0, 12000), diagram: validateDiagram(parsed.diagram) };
-      }
-    } catch (_err) {
-      // Try the next extraction candidate.
-    }
-  }
-
-  throw new Error("Model returned invalid JSON response");
+  if (!parsed || typeof parsed.reply !== "string") throw new Error("Model returned invalid response shape");
+  return { reply: parsed.reply.slice(0, 12000), diagram: validateDiagram(parsed.diagram) };
 }
 
 function createPrompt(cleanPrompt, gradeLevel, hasImage) {
@@ -255,7 +259,13 @@ async function generateWithFallback(prompt, image) {
 
     attempts.push(`Attempting ${image ? "image" : "text"} model: ${modelName}`);
     try {
-      const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { responseMimeType: "application/json" } });
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: MAX_MODEL_OUTPUT_TOKENS
+        }
+      });
       const result = await model.generateContent(parts);
       const parsed = parseTutorResponse(result.response.text());
       MODEL_COOLDOWN_UNTIL.delete(modelName);
@@ -269,7 +279,7 @@ async function generateWithFallback(prompt, image) {
       if (isZeroQuotaError(err) && findErrorStatus(err) === 429) {
         DISABLED_MODELS.add(modelName);
         console.warn(`Gemini model ${modelName} disabled for this process because it reported zero quota`);
-      } else if (isRetriableError(err) || isModelOrCapabilityError(err) || /invalid JSON response/i.test(errorSummary(err))) {
+      } else if (isRetriableError(err) || isModelOrCapabilityError(err) || /invalid JSON response|empty or oversized response/i.test(errorSummary(err))) {
         MODEL_COOLDOWN_UNTIL.set(modelName, Date.now() + TEMPORARY_COOLDOWN_MS);
       } else {
         break;
@@ -287,6 +297,12 @@ async function generateWithFallback(prompt, image) {
 app.post("/ask", async (req, res) => {
   const requestId = randomUUID();
   const startedAt = Date.now();
+  if (activeAskRequests >= MAX_CONCURRENT_ASKS) {
+    res.set("Retry-After", "5");
+    return res.status(503).json({ error: "Tutor is busy; please retry shortly.", requestId });
+  }
+  activeAskRequests++;
+
   try {
     const rawPrompt = req.body && req.body.prompt;
     const image = validateImage(req.body && req.body.image);
@@ -311,6 +327,8 @@ app.post("/ask", async (req, res) => {
     const status = Number.isInteger(error.status) && error.status >= 400 && error.status <= 599 ? error.status : 502;
     console.error(`[ask:${requestId}] failed status=${status} durationMs=${Date.now() - startedAt}:`, errorSummary(error));
     return res.status(status).json({ error: "Failed to get response from AI", attempts: error.attempts || [], requestId });
+  } finally {
+    activeAskRequests--;
   }
 });
 
