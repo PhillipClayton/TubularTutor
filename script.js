@@ -105,13 +105,32 @@ function readImageAsBase64(file) {
   });
 }
 
+async function createSafeImagePreview(file) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const maxDimension = 800;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Selected assignment image preview");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not create an image preview");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    bitmap.close();
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const imageInput = document.getElementById("imageUpload");
   const preview = document.getElementById("imagePreview");
   const clearImage = document.getElementById("clearImage");
   let selectedImage = null;
 
-  imageInput.addEventListener("change", () => {
+  imageInput.addEventListener("change", async () => {
     const file = imageInput.files && imageInput.files[0];
     if (!file) return;
     if (!ALLOWED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
@@ -123,11 +142,20 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     selectedImage = file;
-    const img = document.createElement("img");
-    img.src = URL.createObjectURL(file);
-    img.alt = "Selected assignment image preview";
-    preview.replaceChildren(img);
-    clearImage.hidden = false;
+    clearImage.hidden = true;
+    preview.textContent = "Loading image preview…";
+    try {
+      const canvas = await createSafeImagePreview(file);
+      if (selectedImage !== file) return;
+      preview.replaceChildren(canvas);
+      clearImage.hidden = false;
+    } catch (_error) {
+      if (selectedImage !== file) return;
+      selectedImage = null;
+      imageInput.value = "";
+      preview.textContent = "This image could not be previewed. Choose a valid JPEG, PNG, or WebP image.";
+      alert("Could not read that image. Choose a valid JPEG, PNG, or WebP image.");
+    }
   });
 
   clearImage.addEventListener("click", () => {
