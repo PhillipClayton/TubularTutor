@@ -216,14 +216,14 @@ function parseTutorResponse(text) {
 
 function createPrompt(cleanPrompt, gradeLevel, hasImage) {
   const imageInstruction = hasImage
-    ? " Carefully inspect the student's uploaded image. If it contains a graph or geometry task, you may include an optional diagram in the schema below. Do not guess unclear labels; mention uncertainty."
+    ? " Carefully inspect the student's uploaded image. If it contains a graph or geometry task, you may include an optional diagram in the schema below. Do not guess unclear labels; mention uncertainty instead of inventing details."
     : " You may include an optional diagram when it would help explain the concept.";
-  return `You are a supportive K-12 tutor speaking to a student in grade ${gradeLevel}. Do not give the final answer to an assigned problem. Explain the relevant concept and guide the student with a similar worked example. Return ONLY valid JSON with this shape: {"reply":"tutoring explanation as plain text","diagram":null} or an optional diagram. A graph diagram is {"type":"graph","title":"...","points":[{"x":0,"y":0},{"x":1,"y":1}]}; provide 2-100 numeric points in order. A geometry diagram is {"type":"geometry","title":"...","points":[{"id":"A","x":10,"y":20},{"id":"B","x":80,"y":20}],"segments":[["A","B"]]}; use coordinates from 0 to 100 and only points/segments. Do not include SVG, HTML, scripts, or other markup.${imageInstruction}\nStudent question: ${cleanPrompt}`;
+  return `You are a supportive K-12 tutor speaking to a student in grade ${gradeLevel}. Do not give the final answer to an assigned problem. Explain the relevant concept and guide the student with small steps.${imageInstruction} Reply with JSON: {"reply":"...","diagram":null or {"type":"graph","title":"...","points":[{"x":1,"y":2}]} or {"type":"geometry","title":"...","points":[{"id":"A","x":10,"y":10}],"segments":[["A","B"]]} }`;
 }
 
 async function generateWithFallback(prompt, image) {
   const models = image ? IMAGE_MODELS : TEXT_MODELS;
-  if (models.length === 0) throw new Error(`No available Gemini ${image ? "image" : "text""} models discovered`);
+  if (models.length === 0) throw new Error(`No available Gemini ${image ? "image" : "text"} models discovered`);
   const parts = image ? [prompt, { inlineData: { mimeType: image.mimeType, data: image.data } }] : [prompt];
   const attempts = [];
   let lastError;
@@ -317,4 +317,3 @@ db.initDb()
     console.error("DB init error:", err.message);
     process.exit(1);
   });
-
