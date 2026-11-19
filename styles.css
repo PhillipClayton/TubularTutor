@@ -31,7 +31,7 @@ h1 { color: #4a90e2; margin-bottom: 20px; }
 
 #call label { display: block; margin: 12px 0 8px; font-weight: bold; width: 100%; text-align: center; }
 #prompt { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; min-height: 100px; font-size: 16px; box-sizing: border-box; }
-#grade, #imageUpload { max-width: 100%; }
+#grade { max-width: 100%; }
 
 button {
     background-color: #4a90e2;
@@ -58,9 +58,6 @@ button:disabled { opacity: 0.6; cursor: wait; }
     box-sizing: border-box;
 }
 
-#imagePreview { width: 100%; text-align: center; }
-#imagePreview img { max-width: min(100%, 360px); max-height: 300px; margin-top: 12px; object-fit: contain; }
-#clearImage { background-color: #666; }
 .diagram-container { margin-top: 20px; white-space: normal; }
 .diagram-container h2 { font-size: 1.1rem; }
 .diagram-container svg { display: block; width: 100%; max-height: 420px; border: 1px solid #ddd; border-radius: 4px; }

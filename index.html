@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="favicon.ico" sizes="any">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
     <title>Tubular Tutor</title>
@@ -17,18 +18,9 @@
         <label for="prompt">Your question</label>
         <textarea
             id="prompt"
-            placeholder="Ask your question (supports LaTeX: \sqrt{2x-5}=7)"
+            placeholder="Ask your question (supports LaTeX: \\sqrt{2x-5}=7)"
             rows="4"
         ></textarea>
-
-        <label for="imageUpload">Upload a diagram or assignment (optional)</label>
-        <input
-            id="imageUpload"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-        >
-        <div id="imagePreview" aria-live="polite"></div>
-        <button id="clearImage" type="button" hidden>Remove image</button>
 
         <label for="grade">What is your grade level?</label>
         <select id="grade">

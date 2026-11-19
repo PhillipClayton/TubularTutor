@@ -1,16 +1,13 @@
-# Multimodal tutor configuration
+# Tutor response and Gemini configuration
 
-The `/ask` endpoint accepts the existing text prompt plus an optional inline image. Uploads are limited to 4 MB and JPEG, PNG, and WebP. Images are validated by MIME type and file signature before they are sent to Gemini; they are not stored by the application.
-
-The tutoring page can display model-proposed graphs and geometry diagrams using SVG created from a validated, deliberately small data format. The model never returns SVG/HTML for direct insertion into the page.
+TubularTutor accepts text questions and can render model-proposed graphs and geometry diagrams using SVG created from a validated, deliberately small data format. The model never returns SVG/HTML for direct insertion into the page. Math expressions in responses are rendered locally with KaTeX.
 
 ## Gemini model discovery
 
-At startup, the server queries the Gemini API for models available to `GEMINI_API_KEY` and keeps models that support `generateContent`. It keeps only Gemini Flash and Gemma 4 candidates, excludes image, TTS, Live, audio, embedding, 1.5, and 2.0 model names, and sorts the remaining candidates by version and Flash preference.
+At startup, the server queries the Gemini API for models available to `GEMINI_API_KEY` and keeps models that support `generateContent`. It keeps only Gemini Flash candidates, excludes Gemma, image, TTS, Live, audio, embedding, 1.5, and 2.0 model names, and sorts the remaining candidates by version and Flash preference.
 
 - `GEMINI_TEXT_MODELS`: optional comma-separated text-model preferences.
-- `GEMINI_IMAGE_MODELS`: optional comma-separated image-model preferences.
-- At most three candidates are considered for each modality.
+- At most three candidates are considered.
 - Discovery is refreshed on process startup.
 - If discovery fails, configured preferences are filtered and used if present; otherwise the server reports no candidates rather than using stale names.
 - Name filtering does not prove that a model has free-tier quota. Google returns quota status in runtime errors.

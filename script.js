@@ -3,8 +3,6 @@ const API_BASE = isLocal
   ? (window.location.origin && window.location.origin !== "null" ? window.location.origin : "http://localhost:3000")
   : "https://tubulartutor.onrender.com";
 const BACKEND_URL = `${API_BASE}/ask`;
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function renderMath(text) {
@@ -34,7 +32,7 @@ function updateStatusLog(attempts) {
   attempts.forEach((attempt, index) => {
     const line = document.createElement("div");
     line.style.marginBottom = "6px";
-    const model = attempt.match(/Attempting (?:image|text) model: ([\w.-]+)/);
+    const model = attempt.match(/Attempting text model: ([\w.-]+)/);
     if (model) line.textContent = `${index === 0 ? "🔄 Contacting" : "→ Trying"} ${model[1]}...`;
     else line.textContent = `→ ${attempt}`;
     log.appendChild(line);
@@ -96,88 +94,20 @@ function renderDiagram(diagram) {
   return svg;
 }
 
-function readImageAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = () => reject(new Error("Could not read the selected image"));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function createSafeImagePreview(file) {
-  const bitmap = await createImageBitmap(file);
-  try {
-    const maxDimension = 800;
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", "Selected assignment image preview");
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Could not create an image preview");
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    return canvas;
-  } finally {
-    bitmap.close();
-  }
-}
-
 document.addEventListener("DOMContentLoaded", () => {
-  const imageInput = document.getElementById("imageUpload");
-  const preview = document.getElementById("imagePreview");
-  const clearImage = document.getElementById("clearImage");
-  let selectedImage = null;
-
-  imageInput.addEventListener("change", async () => {
-    const file = imageInput.files && imageInput.files[0];
-    if (!file) return;
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type) || file.size > MAX_IMAGE_BYTES) {
-      imageInput.value = "";
-      selectedImage = null;
-      preview.replaceChildren();
-      clearImage.hidden = true;
-      alert("Choose a JPEG, PNG, or WebP image up to 4 MB.");
-      return;
-    }
-    selectedImage = file;
-    clearImage.hidden = true;
-    preview.textContent = "Loading image preview…";
-    try {
-      const canvas = await createSafeImagePreview(file);
-      if (selectedImage !== file) return;
-      preview.replaceChildren(canvas);
-      clearImage.hidden = false;
-    } catch (_error) {
-      if (selectedImage !== file) return;
-      selectedImage = null;
-      imageInput.value = "";
-      preview.textContent = "This image could not be previewed. Choose a valid JPEG, PNG, or WebP image.";
-      alert("Could not read that image. Choose a valid JPEG, PNG, or WebP image.");
-    }
-  });
-
-  clearImage.addEventListener("click", () => {
-    imageInput.value = "";
-    selectedImage = null;
-    preview.replaceChildren();
-    clearImage.hidden = true;
-  });
-
   document.getElementById("sendPrompt").addEventListener("click", async () => {
     const gradeLevel = Number(document.getElementById("grade").value);
     const rawPrompt = document.getElementById("prompt").value.trim();
-    if (!rawPrompt && !selectedImage) {
-      document.getElementById("response").textContent = "Enter a question or upload an assignment image.";
-      document.getElementById("response").style.display = "block";
+    const responseElement = document.getElementById("response");
+    if (!rawPrompt) {
+      responseElement.textContent = "Enter a question to get started.";
+      responseElement.style.display = "block";
       return;
     }
 
     const button = document.getElementById("sendPrompt");
     const loading = document.getElementById("loading");
     const statusLog = document.getElementById("statusLog");
-    const responseElement = document.getElementById("response");
     button.disabled = true;
     loading.style.display = "block";
     statusLog.textContent = "Contacting a tutoring model...";
@@ -185,12 +115,10 @@ document.addEventListener("DOMContentLoaded", () => {
     responseElement.style.display = "none";
 
     try {
-      const body = { prompt: rawPrompt, gradeLevel };
-      if (selectedImage) body.image = { mimeType: selectedImage.type, data: await readImageAsBase64(selectedImage) };
       const response = await fetch(BACKEND_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify({ prompt: rawPrompt, gradeLevel })
       });
       const data = await response.json();
       if (!response.ok) {
